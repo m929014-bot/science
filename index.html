@@ -211,13 +211,32 @@ function toggleRecord(state) {
 
 function exportCSV() {
     if(csvData.length <= 1) return alert("目前沒有錄製中的數據可供下載。");
+    
+    // 組合 CSV 字串
     let csvContent = "\uFEFF" + csvData.map(e => e.join(",")).join("\n");
-    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    let url = URL.createObjectURL(blob);
-    let link = document.createElement("a");
-    link.href = url;
-    link.download = `實驗紀錄_${new Date().getTime()}.csv`;
-    link.click();
+    
+    // 測試看原生 Web Share API 是否能用 (iOS 支援度較好)
+    if (navigator.share) {
+        let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        let file = new File([blob], `實驗紀錄_${new Date().getTime()}.csv`, { type: 'text/csv' });
+        
+        navigator.share({
+            files: [file],
+            title: '實驗數據下載',
+            text: '這是來自 ESP32-C3 的科學實驗數據'
+        }).then(() => console.log('分享成功'))
+          .catch((error) => console.log('分享失敗', error));
+    } else {
+        // 備用方案：如果 Web Share 不能用，直接打開新視窗顯示文字讓使用者複製
+        let newWindow = window.open();
+        if (newWindow) {
+            newWindow.document.write("<pre>" + csvContent + "</pre>");
+            newWindow.document.close();
+            alert("iOS 瀏覽器限制下載。已在新分頁開啟數據，請全選並複製文字，貼上至 Excel 或記事本即可。");
+        } else {
+            alert("新分頁被瀏覽器阻擋，請允許彈跳視窗。");
+        }
+    }
 }
 
 window.onload = initChart;
