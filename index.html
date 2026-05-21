@@ -151,8 +151,11 @@ function handleSliderChange(val) {
 
 async function connectBLE() {
     try {
+        // 修改過濾器：只要名字開頭是 'ESP32' 的裝置都會列出來供使用者選擇
         bleDevice = await navigator.bluetooth.requestDevice({
-            filters: [{ namePrefix: 'ESP32' }],
+            filters: [
+                { namePrefix: 'ESP32' } 
+            ],
             optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
         });
         const server = await bleDevice.gatt.connect();
@@ -160,8 +163,12 @@ async function connectBLE() {
         characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
         await characteristic.startNotifications();
         characteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-        alert("已成功連接！");
-    } catch (e) { alert("無法連線，請確認藍牙與權限。"); }
+        
+        // 連線成功時，順便提示使用者連到的是哪一台裝置
+        alert(`已成功連接至：${bleDevice.name}`);
+    } catch (e) { 
+        alert("無法連線，請確認藍牙與權限。"); 
+    }
 }
 
 function handleNotifications(event) {
