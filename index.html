@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ESP32-C3 科學實驗終端</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-color: #1a73e8;
+            --success-color: #34a853;
+            --danger-color: #ea4335;
+            --warning-color: #fbbc05;
+            --record-color: #ff5722;
+        }
+
+        body { font-family: -apple-system, sans-serif; background: #f8f9fa; margin: 0; padding: 10px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 1000px; background: white; padding: 20px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); border-top: 5px solid #ccc; }
+        
+        h2 { text-align: center; color: #3c4043; margin: 0 0 20px 0; }
+
+        .section-label { font-size: 0.9rem; font-weight: bold; color: #5f6368; margin-top: 15px; margin-bottom: 8px; display: block; border-left: 4px solid var(--primary-color); padding-left: 8px; }
+        
+        /* 按鈕與排版 */
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+        button { flex: 1; min-width: 100px; padding: 14px; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:active { opacity: 0.7; transform: scale(0.98); }
+        
+        .btn-connect { background: var(--primary-color); color: white; width: 100%; margin-bottom: 15px; font-size: 1.1rem; }
+        .btn-start { background: var(--success-color); color: white; }
+        .btn-stop { background: var(--danger-color); color: white; }
+        .btn-record-start { background: var(--record-color); color: white; }
+        .btn-record-stop { background: #5f6368; color: white; }
+        .btn-download { background: var(--warning-color); color: #3c4043; width: 100%; margin-top: 10px; border: 2px solid #e2b007; }
+
+        /* 數值顯示 */
+        .display-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 10px; }
+        .card { background: #f1f3f4; padding: 15px; border-radius: 12px; text-align: center; }
+        .val { font-size: 3rem; font-weight: 800; color: var(--primary-color); line-height: 1.2; }
+        .unit { font-size: 1.1rem; color: #70757a; margin-left: 4px; }
+
+        /* 滑桿 */
+        .slider-section { background: #fff; border: 2px solid #e8eaed; padding: 12px; border-radius: 12px; margin-bottom: 15px; }
+        .slider-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-weight: bold; }
+        input[type=range] { width: 100%; height: 10px; cursor: pointer; }
+
+        /* 圖表 */
+        .chart-container { position: relative; height: 35vh; min-height: 250px; width: 100%; margin: 15px 0; background: #fff; border-radius: 8px; padding: 5px; }
+
+        /* 底部錄製區塊 */
+        .footer-record-zone { background: #fff5f2; padding: 15px; border-radius: 12px; border: 1px dashed var(--record-color); margin-top: 20px; }
+        #recordStatus { font-size: 0.85rem; float: right; display: none; }
+        .recording-text { display: inline !important; color: var(--danger-color); font-weight: bold; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.3; } }
+
+        @media (max-width: 600px) {
+            .val { font-size: 2.5rem; }
+            button { padding: 12px; font-size: 0.9rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container" id="mainContainer">
+    <h2>科學實驗數據中心</h2>
+    
+    <!-- 1. 連線 -->
+    <button class="btn-connect" onclick="connectBLE()">🔗 連接 ESP32-C3 裝置</button>
+    
+    <!-- 2. 數值與滑桿 -->
+    <div class="display-grid">
+        <div class="card"><h3>溫度</h3><div><span id="tempVal" class="val">--</span><span class="unit">°C</span></div></div>
+        <div class="card"><h3>壓力</h3><div><span id="pressVal" class="val">--</span><span class="unit">hPa</span></div></div>
+    </div>
+
+    <div class="slider-section">
+        <div class="slider-header">
+            <span>擷取間隔: <span id="intervalLabel" style="color:var(--danger-color)">200 ms</span></span>
+        </div>
+        <input type="range" id="intervalRange" min="100" max="60000" step="100" value="200" oninput="handleSliderChange(this.value)">
+    </div>
+
+    <!-- 3. 圖表顯示控制 -->
+    <span class="section-label">圖表即時呈現控制</span>
+    <div class="btn-group">
+        <button class="btn-start" onclick="toggleDisplay(true)">START</button>
+        <button class="btn-stop" onclick="toggleDisplay(false)">STOP</button>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="myChart"></canvas>
+    </div>
+
+    <!-- 4. CSV 錄製區 (統一在底部) -->
+    <div class="footer-record-zone">
+        <span class="section-label" style="margin-top:0;">CSV 數據錄製中心 <span id="recordStatus">● 錄製中...</span></span>
+        <div class="btn-group">
+            <button class="btn-record-start" onclick="toggleRecord(true)">開始錄製 (START)</button>
+            <button class="btn-record-stop" onclick="toggleRecord(false)">停止錄製 (STOP)</button>
+        </div>
+        <button class="btn-download" onclick="exportCSV()">💾 下載 CSV 實驗紀錄</button>
+        <div style="font-size: 0.8rem; color: #777; margin-top: 8px; text-align: center;">
+            * 錄製功能獨立運作，即使圖表停止也能持續儲存數據。
+        </div>
+    </div>
+</div>
+
+<script>
+let bleDevice, characteristic;
+let isDisplaying = false;
+let isRecording = false;
+let csvData = [["時間", "溫度(C)", "壓力(hPa)"]];
+let chart;
+let updateIntervalTime = 200;
+let lastUpdateTime = 0;
+
+function initChart() {
+    const ctx = document.getElementById('myChart').getContext('2d');
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: '壓力 (hPa)',
+                borderColor: '#1a73e8',
+                backgroundColor: 'rgba(26, 115, 232, 0.1)',
+                borderWidth: 3,
+                pointRadius: 0,
+                fill: true,
+                data: [],
+                tension: 0.3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { 
+                x: { display: false }, 
+                y: { beginAtZero: false, ticks: { font: { size: 10 } } } 
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+function handleSliderChange(val) {
+    toggleDisplay(false); 
+    updateIntervalTime = val;
+    document.getElementById('intervalLabel').innerText = val >= 1000 ? (val/1000).toFixed(1) + " 秒" : val + " ms";
+}
+
+async function connectBLE() {
+    try {
+        bleDevice = await navigator.bluetooth.requestDevice({
+            filters: [{ namePrefix: 'ESP32' }],
+            optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+        });
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+        characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+        await characteristic.startNotifications();
+        characteristic.addEventListener('characteristicvaluechanged', handleNotifications);
+        alert("已成功連接！");
+    } catch (e) { alert("無法連線，請確認藍牙與權限。"); }
+}
+
+function handleNotifications(event) {
+    let now = Date.now();
+    if (now - lastUpdateTime < updateIntervalTime) return;
+    lastUpdateTime = now;
+
+    let value = event.target.value;
+    let temp = value.getInt32(0, true) / 100;
+    let press = value.getInt32(4, true) / 100;
+
+    // 即時顯示
+    if (isDisplaying) {
+        document.getElementById('tempVal').innerText = temp.toFixed(1);
+        document.getElementById('pressVal').innerText = press.toFixed(1);
+        
+        chart.data.labels.push(new Date().toLocaleTimeString());
+        chart.data.datasets[0].data.push(press);
+        if (chart.data.labels.length > 40) {
+            chart.data.labels.shift();
+            chart.data.datasets[0].data.shift();
+        }
+        chart.update('none');
+    }
+
+    // CSV 錄製
+    if (isRecording) {
+        csvData.push([new Date().toLocaleString(), temp, press]);
+    }
+}
+
+function toggleDisplay(state) {
+    isDisplaying = state;
+    document.getElementById('mainContainer').style.borderTopColor = state ? "var(--success-color)" : "#ccc";
+}
+
+function toggleRecord(state) {
+    isRecording = state;
+    const status = document.getElementById('recordStatus');
+    if (state) {
+        status.className = 'recording-text';
+    } else {
+        status.className = '';
+        if(csvData.length > 1) alert("已停止錄製，目前存有 " + (csvData.length - 1) + " 筆數據。");
+    }
+}
+
+function exportCSV() {
+    if(csvData.length <= 1) return alert("目前沒有錄製中的數據可供下載。");
+    let csvContent = "\uFEFF" + csvData.map(e => e.join(",")).join("\n");
+    let blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    let url = URL.createObjectURL(blob);
+    let link = document.createElement("a");
+    link.href = url;
+    link.download = `實驗紀錄_${new Date().getTime()}.csv`;
+    link.click();
+}
+
+window.onload = initChart;
+</script>
+</body>
+</html>
