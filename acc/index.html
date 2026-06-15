@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ESP32-C3 加速度科學實驗終端</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-color: #1a73e8;
+            --success-color: #34a853;
+            --danger-color: #ea4335;
+            --warning-color: #fbbc05;
+            --neutral-color: #dadce0;
+        }
+
+        body { font-family: -apple-system, sans-serif; background: #f8f9fa; margin: 0; padding: 10px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 850px; background: white; padding: 25px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); border-top: 5px solid #ccc; }
+        
+        h2 { text-align: center; color: #3c4043; margin: 0 0 20px 0; }
+        
+        .btn-connect { background: var(--primary-color); color: white; width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 1.1rem; font-weight: bold; cursor: pointer; transition: 0.2s; margin-bottom: 20px; }
+        .btn-connect:active { opacity: 0.8; transform: scale(0.99); }
+
+        /* 核心指定提示文字（拿掉 [提示文字] 字樣） */
+        .hint-banner { background: #e8f0fe; color: #1967d2; padding: 15px; border-radius: 8px; font-weight: bold; font-size: 1.2rem; margin-bottom: 20px; border-left: 5px solid var(--primary-color); text-align: center; }
+        
+        /* 即時閘門狀態 */
+        .gate-status-container { display: flex; justify-content: space-around; background: #f1f3f4; padding: 12px; border-radius: 12px; margin-bottom: 25px; }
+        .gate-indicator { display: flex; align-items: center; gap: 8px; font-weight: bold; color: #5f6368; font-size: 1.1rem; }
+        .circle { width: 18px; height: 18px; border-radius: 50%; background: var(--neutral-color); transition: background 0.1s ease; }
+        .circle.active { background: var(--success-color); box-shadow: 0 0 8px var(--success-color); }
+
+        /* 【放大優化】實驗結果指定格式區塊 */
+        .result-box { background: #ffffff; border: 2px solid #e8eaed; padding: 25px; border-radius: 12px; margin-bottom: 25px; }
+        .result-title { font-size: 1.5rem; font-weight: bold; color: #202124; margin-bottom: 20px; border-bottom: 2px solid #e8eaed; padding-bottom: 8px; }
+        
+        /* 放大結果項目的文字 */
+        .result-item { font-size: 1.4rem; color: #3c4043; padding: 12px 0; display: flex; justify-content: space-between; border-bottom: 1px dashed #e8eaed; align-items: center; }
+        .result-item:last-child { border-bottom: none; font-weight: bold; color: #000; background-color: #fffde7; padding: 15px 10px; border-radius: 8px; }
+        
+        /* 放大數據與單位數值 */
+        .val-slot { color: var(--primary-color); font-weight: 800; font-size: 1.6rem; font-family: monospace, sans-serif; }
+        .unit-slot { font-size: 1.2rem; color: #5f6368; margin-left: 5px; font-weight: normal; }
+        
+        .accel-title { color: #b06000; font-size: 1.5rem; }
+        .accel-slot { color: #e65100; font-size: 2.2rem; font-weight: 900; font-family: monospace, sans-serif; }
+        .accel-unit { font-size: 1.4rem; color: #e65100; margin-left: 5px; }
+
+        /* 圖表呈現區塊 */
+        .section-label { font-size: 1rem; font-weight: bold; color: #5f6368; margin-top: 15px; margin-bottom: 12px; display: block; border-left: 4px solid var(--warning-color); padding-left: 8px; }
+        .chart-container { position: relative; height: 320px; width: 100%; background: #fff; border-radius: 8px; padding: 5px; border: 1px solid #e8eaed; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="mainContainer">
+    <h2>科學實驗數據中心 - 加速度計</h2>
+    
+    <button class="btn-connect" onclick="connectBLE()">🔗 連接 ESP32-C3 光電門裝置</button>
+    
+    <div class="hint-banner" id="statusHint">從1號門放入物體即開始實驗：</div>
+
+    <div class="gate-status-container">
+        <div class="gate-indicator"><div id="circle1" class="circle"></div> 1 號門</div>
+        <div class="gate-indicator"><div id="circle2" class="circle"></div> 2 號門</div>
+        <div class="gate-indicator"><div id="circle3" class="circle"></div> 3 號門</div>
+    </div>
+    
+    <div class="result-box">
+        <div class="result-title">[實驗結果]</div>
+        <div class="result-item"><span>歷時1 (t1-&gt;t2)：</span><span><span id="dt1Val" class="val-slot">--</span><span class="unit-slot">秒</span></span></div>
+        <div class="result-item"><span>歷時2 (t2-&gt;t3)：</span><span><span id="dt2Val" class="val-slot">--</span><span class="unit-slot">秒</span></span></div>
+        <div class="result-item"><span>前半段平均速度 V1：</span><span><span id="v1Val" class="val-slot">--</span><span class="unit-slot">m/s</span></span></div>
+        <div class="result-item"><span>後半段平均速度 V2：</span><span><span id="v2Val" class="val-slot">--</span><span class="unit-slot">m/s</span></span></div>
+        <div class="result-item"><span class="accel-title">[計算所得加速度 a]：</span><span><span id="accelVal" class="accel-slot">--</span><span class="accel-unit">m/s²</span></span></div>
+    </div>
+
+    <span class="section-label">即時圖表呈現 (自動追蹤加速度變動)</span>
+    <div class="chart-container">
+        <canvas id="myChart"></canvas>
+    </div>
+</div>
+
+<script>
+let bleDevice, characteristic;
+let chart;
+
+function initChart() {
+    const ctx = document.getElementById('myChart').getContext('2d');
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: '加速度 (m/s²)',
+                borderColor: '#1a73e8',
+                backgroundColor: 'rgba(26, 115, 232, 0.05)',
+                borderWidth: 2.5,
+                pointRadius: 5,
+                data: [],
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { 
+                x: { ticks: { font: { size: 11 } } }, 
+                y: { ticks: { font: { size: 11 } } } 
+            }
+        }
+    });
+}
+
+async function connectBLE() {
+    try {
+        bleDevice = await navigator.bluetooth.requestDevice({
+            filters: [{ namePrefix: 'ESP32' }],
+            optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+        });
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+        characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+        await characteristic.startNotifications();
+        characteristic.addEventListener('characteristicvaluechanged', handleNotifications);
+        
+        alert(`已成功連接裝置：${bleDevice.name}`);
+        document.getElementById('mainContainer').style.borderTopColor = "var(--success-color)";
+    } catch (e) { 
+        alert("無法連線，請確認藍牙與定位權限是否開啟。"); 
+    }
+}
+
+function handleNotifications(event) {
+    let value = event.target.value;
+    
+    // 解析來自 ESP32 的 24 位元組高精度實驗數據封包
+    let statusCode = value.getInt32(0, true);
+    let rawDt1     = value.getInt32(4, true) / 1000000; 
+    let rawDt2     = value.getInt32(8, true) / 1000000;
+    let v1         = value.getInt32(12, true) / 1000;   
+    let v2         = value.getInt32(16, true) / 1000;
+    let accel      = value.getInt32(20, true) / 1000;
+
+    // 即時處理閘門狀態與動態提示
+    if (statusCode === 1) {
+        document.getElementById('statusHint').innerText = "實驗中：已通過 1 號門...";
+        document.getElementById('circle1').className = 'circle active';
+        document.getElementById('circle2').className = 'circle';
+        document.getElementById('circle3').className = 'circle';
+    } 
+    else if (statusCode === 2) {
+        document.getElementById('statusHint').innerText = "實驗中：已通過 2 號門...";
+        document.getElementById('circle2').className = 'circle active';
+    } 
+    else if (statusCode === 3) {
+        // 3 門全亮
+        document.getElementById('circle3').className = 'circle active';
+        document.getElementById('statusHint').innerText = "計算完成！";
+
+        // 更新數據欄位（字體加大，並套用 Fixed 格式展現高精度）
+        document.getElementById('dt1Val').innerText = rawDt1.toFixed(6);
+        document.getElementById('dt2Val').innerText = rawDt2.toFixed(6);
+        document.getElementById('v1Val').innerText = v1.toFixed(3);
+        document.getElementById('v2Val').innerText = v2.toFixed(3);
+        document.getElementById('accelVal').innerText = accel.toFixed(3);
+
+        // 移除手動控制按鈕後，數據傳入即會自動即時更新至圖表
+        let timeStr = new Date().toLocaleTimeString();
+        chart.data.labels.push(timeStr);
+        chart.data.datasets[0].data.push(accel);
+        if (chart.data.labels.length > 15) {
+            chart.data.labels.shift();
+            chart.data.datasets[0].data.shift();
+        }
+        chart.update();
+
+        // 保持 3 燈全亮視覺回饋 800ms 後，回復都不亮，並重置核心提示字
+        setTimeout(() => {
+            document.getElementById('circle1').className = 'circle';
+            document.getElementById('circle2').className = 'circle';
+            document.getElementById('circle3').className = 'circle';
+            document.getElementById('statusHint').innerText = "從1號門放入物體即開始實驗：";
+        }, 800); 
+    }
+}
+
+window.onload = initChart;
+</script>
+</body>
+</html>
